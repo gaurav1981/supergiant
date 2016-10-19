@@ -63,7 +63,8 @@ type AWSKubeConfig struct {
 	PublicSubnetIPRange string `json:"public_subnet_ip_range" validate:"nonzero" sg:"default=172.20.0.0/24"`
 	MasterPrivateIP     string `json:"master_private_ip" validate:"nonzero" sg:"default=172.20.0.9"`
 
-	PrivateKey                    string `json:"private_key,omitempty" sg:"readonly,private"`
+	PrivateKey                    string `json:"private_key,omitempty" sg:"readonly"`
+	SSHPubKey                     string `json:"ssh_pub_key" validate:"nonzero"`
 	VPCID                         string `json:"vpc_id" sg:"readonly"`
 	InternetGatewayID             string `json:"internet_gateway_id" sg:"readonly"`
 	PublicSubnetID                string `json:"public_subnet_id" sg:"readonly"`

@@ -19,6 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/elb/elbiface"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/iam/iamiface"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/supergiant/supergiant/bindata"
 	"github.com/supergiant/supergiant/pkg/core"
 	"github.com/supergiant/supergiant/pkg/kubernetes"
@@ -45,6 +47,7 @@ var globalAWSSession = session.New()
 type Provider struct {
 	Core *core.Core
 	EC2  func(*model.Kube) ec2iface.EC2API
+	S3   func(*model.Kube) s3iface.S3API
 	IAM  func(*model.Kube) iamiface.IAMAPI
 	ELB  func(*model.Kube) elbiface.ELBAPI
 }
@@ -149,6 +152,10 @@ func EC2(kube *model.Kube) ec2iface.EC2API {
 	return ec2.New(globalAWSSession, awsConfig(kube))
 }
 
+func S3(kube *model.Kube) s3iface.S3API {
+	return s3.New(globalAWSSession, awsConfig(kube))
+}
+
 func ELB(kube *model.Kube) elbiface.ELBAPI {
 	return elb.New(globalAWSSession, awsConfig(kube))
 }
@@ -169,6 +176,7 @@ func awsConfig(kube *model.Kube) *aws.Config {
 func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 	iamS := p.IAM(m)
 	ec2S := p.EC2(m)
+	s3S := p.S3(m)
 	procedure := &core.Procedure{
 		Core:   p.Core,
 		Name:   "Create Kube",
@@ -292,6 +300,11 @@ func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 			return err
 		}
 		m.AWSConfig.PrivateKey = *resp.KeyMaterial
+		return nil
+	})
+
+	procedure.AddStep("creating S3 bucket", func() error {
+
 		return nil
 	})
 
@@ -638,7 +651,7 @@ func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 			return nil
 		}
 
-		userdataTemplate, err := bindata.Asset("config/providers/aws/master_userdata.txt")
+		userdataTemplate, err := bindata.Asset("config/providers/aws/master.yaml")
 		if err != nil {
 			return err
 		}
@@ -652,10 +665,15 @@ func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 		}
 		encodedUserdata := base64.StdEncoding.EncodeToString(userdata.Bytes())
 
+		ami, err := getAMI(ec2S)
+		if err != nil {
+			return err
+		}
+
 		input := &ec2.RunInstancesInput{
 			MinCount:     aws.Int64(1),
 			MaxCount:     aws.Int64(1),
-			ImageId:      aws.String(AWSMasterAMIs[m.AWSConfig.Region]),
+			ImageId:      aws.String(ami),
 			InstanceType: aws.String(m.MasterNodeSize),
 			KeyName:      aws.String(m.Name + "-key"),
 			NetworkInterfaces: []*ec2.InstanceNetworkInterfaceSpecification{
@@ -1010,11 +1028,17 @@ func (p *Provider) createServer(m *model.Node) (*ec2.Instance, error) {
 	}
 	encodedUserdata := base64.StdEncoding.EncodeToString(userdata.Bytes())
 
+	ec2S := p.EC2(m.Kube)
+	ami, err := getAMI(ec2S)
+	if err != nil {
+		return nil, err
+	}
+
 	input := &ec2.RunInstancesInput{
 		MinCount:     aws.Int64(1),
 		MaxCount:     aws.Int64(1),
 		InstanceType: aws.String(m.Size),
-		ImageId:      aws.String(AWSMasterAMIs[m.Kube.AWSConfig.Region]),
+		ImageId:      aws.String(ami),
 		EbsOptimized: aws.Bool(true),
 		KeyName:      aws.String(m.Kube.Name + "-key"),
 		SecurityGroupIds: []*string{
@@ -1045,8 +1069,6 @@ func (p *Provider) createServer(m *model.Node) (*ec2.Instance, error) {
 		UserData: aws.String(encodedUserdata),
 		SubnetId: aws.String(m.Kube.AWSConfig.PublicSubnetID),
 	}
-
-	ec2S := p.EC2(m.Kube)
 
 	resp, err := ec2S.RunInstances(input)
 	if err != nil {
@@ -1397,4 +1419,61 @@ func tagAWSResource(ec2S ec2iface.EC2API, idstr string, tags map[string]string) 
 	}
 	_, err := ec2S.CreateTags(input)
 	return err
+}
+
+func getAMI(ec2S ec2iface.EC2API) (string, error) {
+	images, err := ec2S.DescribeImages(&ec2.DescribeImagesInput{
+		Filters: []*ec2.Filter{
+			&ec2.Filter{
+				Name: aws.String("architecture"),
+				Values: []*string{
+					aws.String("x86_64"),
+				},
+			},
+			&ec2.Filter{
+				Name: aws.String("owner-id"),
+				Values: []*string{
+					aws.String("595879546273"),
+				},
+			},
+			&ec2.Filter{
+				Name: aws.String("name"),
+				Values: []*string{
+					aws.String("*stable*"),
+				},
+			},
+			&ec2.Filter{
+				Name: aws.String("virtualization-type"),
+				Values: []*string{
+					aws.String("hvm"),
+				},
+			},
+		},
+	})
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	var latestImage *ec2.Image
+	for _, image := range images.Images {
+		// latest year
+		if latestImage == nil {
+			latestImage = image
+			continue
+		}
+
+		latestImageCreationTime, err := time.Parse("2006-01-02T15:04:05.000Z", *latestImage.CreationDate)
+		if err != nil {
+			panic(err)
+		}
+		imageCreationTime, err := time.Parse("2006-01-02T15:04:05.000Z", *image.CreationDate)
+		if err != nil {
+			panic(err)
+		}
+
+		if imageCreationTime.After(latestImageCreationTime) {
+			latestImage = image
+		}
+	}
+	return *latestImage.ImageId, nil
 }
