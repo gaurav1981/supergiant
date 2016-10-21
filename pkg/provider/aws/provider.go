@@ -28,22 +28,10 @@ import (
 	"github.com/supergiant/supergiant/pkg/util"
 )
 
-var AWSMasterAMIs = map[string]string{
-	"ap-northeast-1": "ami-907fa690",
-	"ap-southeast-1": "ami-b4a79de6",
-	"eu-central-1":   "ami-e8635bf5",
-	"eu-west-1":      "ami-0fd0ae78",
-	"sa-east-1":      "ami-f9f675e4",
-	"us-east-1":      "ami-f57b8f9e",
-	"us-west-1":      "ami-87b643c3",
-	"cn-north-1":     "ami-3abf2203",
-	"ap-southeast-2": "ami-1bb9c221",
-	"us-west-2":      "ami-33566d03",
-}
-
 // TODO this and the similar concept in Kubes should be moved to core, not global vars
 var globalAWSSession = session.New()
 
+// Provider AWS provider object
 type Provider struct {
 	Core *core.Core
 	EC2  func(*model.Kube) ec2iface.EC2API
@@ -52,6 +40,7 @@ type Provider struct {
 	ELB  func(*model.Kube) elbiface.ELBAPI
 }
 
+// ValidateAccount validates that the AWS credentials entered work.
 func (p *Provider) ValidateAccount(m *model.CloudAccount) error {
 	// Doesn't really matter what we do here, as long as it works
 	mockKube := &model.Kube{
@@ -64,116 +53,8 @@ func (p *Provider) ValidateAccount(m *model.CloudAccount) error {
 	return err
 }
 
+// CreateKube creates a Kubernetes cluster.
 func (p *Provider) CreateKube(m *model.Kube, action *core.Action) error {
-	return p.createKube(m, action)
-}
-
-func (p *Provider) DeleteKube(m *model.Kube, action *core.Action) error {
-	return p.deleteKube(m, action)
-}
-
-func (p *Provider) CreateNode(m *model.Node, action *core.Action) error {
-	return p.createNode(m)
-}
-
-func (p *Provider) DeleteNode(m *model.Node, action *core.Action) error {
-	return p.deleteServer(m)
-}
-
-func (p *Provider) CreateVolume(m *model.Volume, action *core.Action) error {
-	return p.createVolume(m, nil)
-}
-
-func (p *Provider) KubernetesVolumeDefinition(m *model.Volume) *kubernetes.Volume {
-	return &kubernetes.Volume{
-		Name: m.Name,
-		AwsElasticBlockStore: &kubernetes.AwsElasticBlockStore{
-			VolumeID: m.ProviderID,
-			FSType:   "ext4",
-		},
-	}
-}
-
-func (p *Provider) ResizeVolume(m *model.Volume, action *core.Action) error {
-	return p.resizeVolume(m, action)
-}
-
-func (p *Provider) WaitForVolumeAvailable(m *model.Volume, action *core.Action) error {
-	return p.waitForAvailable(m)
-}
-
-func (p *Provider) DeleteVolume(m *model.Volume, action *core.Action) error {
-	return p.deleteVolume(m)
-}
-
-func (p *Provider) CreateEntrypoint(m *model.Entrypoint, action *core.Action) error {
-	return p.createELB(m)
-}
-
-func (p *Provider) DeleteEntrypoint(m *model.Entrypoint, action *core.Action) error {
-	return p.deleteELB(m)
-}
-
-func (p *Provider) CreateEntrypointListener(m *model.EntrypointListener, action *core.Action) error {
-	input := &elb.CreateLoadBalancerListenersInput{
-		LoadBalancerName: aws.String(m.Entrypoint.ProviderID),
-		Listeners: []*elb.Listener{
-			{
-				LoadBalancerPort: aws.Int64(m.EntrypointPort),
-				Protocol:         aws.String(m.EntrypointProtocol),
-				InstancePort:     aws.Int64(m.NodePort),
-				InstanceProtocol: aws.String(m.NodeProtocol),
-			},
-		},
-	}
-	_, err := p.ELB(m.Entrypoint.Kube).CreateLoadBalancerListeners(input)
-	return err
-}
-
-func (p *Provider) DeleteEntrypointListener(m *model.EntrypointListener, action *core.Action) error {
-	input := &elb.DeleteLoadBalancerListenersInput{
-		LoadBalancerName: aws.String(m.Entrypoint.ProviderID),
-		LoadBalancerPorts: []*int64{
-			aws.Int64(m.EntrypointPort),
-		},
-	}
-	_, err := p.ELB(m.Entrypoint.Kube).DeleteLoadBalancerListeners(input)
-	if isErrAndNotAWSNotFound(err) {
-		return err
-	}
-	return nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Private methods                                                            //
-////////////////////////////////////////////////////////////////////////////////
-
-func EC2(kube *model.Kube) ec2iface.EC2API {
-	return ec2.New(globalAWSSession, awsConfig(kube))
-}
-
-func S3(kube *model.Kube) s3iface.S3API {
-	return s3.New(globalAWSSession, awsConfig(kube))
-}
-
-func ELB(kube *model.Kube) elbiface.ELBAPI {
-	return elb.New(globalAWSSession, awsConfig(kube))
-}
-
-func IAM(kube *model.Kube) iamiface.IAMAPI {
-	return iam.New(globalAWSSession, awsConfig(kube))
-}
-
-func awsConfig(kube *model.Kube) *aws.Config {
-	c := kube.CloudAccount.Credentials
-	creds := credentials.NewStaticCredentials(c["access_key"], c["secret_key"], "")
-	creds.Get()
-	return aws.NewConfig().WithRegion(kube.AWSConfig.Region).WithCredentials(creds)
-}
-
-//------------------------------------------------------------------------------
-
-func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 	iamS := p.IAM(m)
 	ec2S := p.EC2(m)
 	s3S := p.S3(m)
@@ -186,42 +67,42 @@ func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 
 	procedure.AddStep("preparing IAM Role kubernetes-master", func() error {
 		policy := `{
-			"Version": "2012-10-17",
-			"Statement": [
-				{
-					"Action": "sts:AssumeRole",
-					"Principal": {"AWS": "*"},
-					"Effect": "Allow",
-					"Sid": ""
-				}
-			]
-		}`
+				"Version": "2012-10-17",
+				"Statement": [
+					{
+						"Action": "sts:AssumeRole",
+						"Principal": {"AWS": "*"},
+						"Effect": "Allow",
+						"Sid": ""
+					}
+				]
+			}`
 		return createIAMRole(iamS, "kubernetes-master", policy)
 	})
 
 	procedure.AddStep("preparing IAM Role Policy kubernetes-master", func() error {
 		policy := `{
-			"Version": "2012-10-17",
-			"Statement": [
-				{
-					"Effect": "Allow",
-					"Action": ["ec2:*"],
-					"Resource": ["*"]
-				},
-				{
-					"Effect": "Allow",
-					"Action": ["elasticloadbalancing:*"],
-					"Resource": ["*"]
-				},
-				{
-					"Effect": "Allow",
-					"Action": "s3:*",
-					"Resource": [
-						"arn:aws:s3:::kubernetes-*"
-					]
-				}
-			]
-		}`
+				"Version": "2012-10-17",
+				"Statement": [
+					{
+						"Effect": "Allow",
+						"Action": ["ec2:*"],
+						"Resource": ["*"]
+					},
+					{
+						"Effect": "Allow",
+						"Action": ["elasticloadbalancing:*"],
+						"Resource": ["*"]
+					},
+					{
+						"Effect": "Allow",
+						"Action": "s3:*",
+						"Resource": [
+							"arn:aws:s3:::kubernetes-*/*"
+						]
+					}
+				]
+			}`
 		return createIAMRolePolicy(iamS, "kubernetes-master", policy)
 	})
 
@@ -231,47 +112,47 @@ func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 
 	procedure.AddStep("preparing IAM Role kubernetes-minion", func() error {
 		policy := `{
-			"Version": "2012-10-17",
-			"Statement": [
-				{
-					"Action": "sts:AssumeRole",
-					"Principal": {"AWS": "*"},
-					"Effect": "Allow",
-					"Sid": ""
-				}
-			]
-		}`
+				"Version": "2012-10-17",
+				"Statement": [
+					{
+						"Action": "sts:AssumeRole",
+						"Principal": {"AWS": "*"},
+						"Effect": "Allow",
+						"Sid": ""
+					}
+				]
+			}`
 		return createIAMRole(iamS, "kubernetes-minion", policy)
 	})
 
 	procedure.AddStep("preparing IAM Role Policy kubernetes-minion", func() error {
 		policy := `{
-			"Version": "2012-10-17",
-			"Statement": [
-				{
-					"Effect": "Allow",
-					"Action": "s3:*",
-					"Resource": [
-						"arn:aws:s3:::kubernetes-*"
-					]
-				},
-				{
-					"Effect": "Allow",
-					"Action": "ec2:Describe*",
-					"Resource": "*"
-				},
-				{
-					"Effect": "Allow",
-					"Action": "ec2:AttachVolume",
-					"Resource": "*"
-				},
-				{
-					"Effect": "Allow",
-					"Action": "ec2:DetachVolume",
-					"Resource": "*"
-				}
-			]
-		}`
+				"Version": "2012-10-17",
+				"Statement": [
+					{
+						"Effect": "Allow",
+						"Action": "s3:*",
+						"Resource": [
+							"arn:aws:s3:::kubernetes-*"
+						]
+					},
+					{
+						"Effect": "Allow",
+						"Action": "ec2:Describe*",
+						"Resource": "*"
+					},
+					{
+						"Effect": "Allow",
+						"Action": "ec2:AttachVolume",
+						"Resource": "*"
+					},
+					{
+						"Effect": "Allow",
+						"Action": "ec2:DetachVolume",
+						"Resource": "*"
+					}
+				]
+			}`
 		return createIAMRolePolicy(iamS, "kubernetes-minion", policy)
 	})
 
@@ -304,7 +185,45 @@ func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 	})
 
 	procedure.AddStep("creating S3 bucket", func() error {
+		_, err := s3S.CreateBucket(&s3.CreateBucketInput{
+			Bucket: aws.String("kubernetes-" + m.Name),
+		})
+		if err != nil {
+			return err
+		}
 
+		s3S.PutBucketPolicy(&s3.PutBucketPolicyInput{
+			Bucket: aws.String("kubernetes-" + m.Name), // Required
+			Policy: aws.String(``),                     // Required
+		})
+
+		return nil
+	})
+
+	procedure.AddStep("upload assets to S3", func() error {
+		userdataTemplate, err := bindata.Asset("config/providers/aws/master.yaml")
+		if err != nil {
+			return err
+		}
+		template, err := template.New("minion_template").Parse(string(userdataTemplate))
+		if err != nil {
+			return err
+		}
+
+		var userdata bytes.Buffer
+		if err = template.Execute(&userdata, m); err != nil {
+			return err
+		}
+
+		_, err = s3S.PutObject(&s3.PutObjectInput{
+			Bucket:        aws.String("kubernetes-" + m.Name), // Required
+			Key:           aws.String("build/master.yaml"),    // Required
+			Body:          bytes.NewReader(userdata.Bytes()),
+			ContentLength: aws.Int64(int64(userdata.Len())),
+		})
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -651,7 +570,7 @@ func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 			return nil
 		}
 
-		userdataTemplate, err := bindata.Asset("config/providers/aws/master.yaml")
+		userdataTemplate, err := bindata.Asset("config/providers/aws/bootstrap.yaml")
 		if err != nil {
 			return err
 		}
@@ -799,8 +718,10 @@ func (p *Provider) createKube(m *model.Kube, action *core.Action) error {
 	return procedure.Run()
 }
 
-func (p *Provider) deleteKube(m *model.Kube, action *core.Action) error {
+// DeleteKube deletes a Kubernetes cluster.
+func (p *Provider) DeleteKube(m *model.Kube, action *core.Action) error {
 	ec2S := p.EC2(m)
+	s3S := p.S3(m)
 	procedure := &core.Procedure{
 		Core:   p.Core,
 		Name:   "Delete Kube",
@@ -875,7 +796,10 @@ func (p *Provider) deleteKube(m *model.Kube, action *core.Action) error {
 		// we can't wait directly on minions to terminate (we can, but I'm lazy rn)
 		waitErr := util.WaitFor("Internet Gateway to detach", 5*time.Minute, 5*time.Second, func() (bool, error) {
 			if _, err := ec2S.DetachInternetGateway(diginput); err != nil && !strings.Contains(err.Error(), "not attached") {
-
+				if strings.Contains(err.Error(), "does not exist") {
+					// it does not exist,
+					return true, nil
+				}
 				p.Core.Log.Warn(err.Error())
 
 				return false, nil
@@ -890,6 +814,10 @@ func (p *Provider) deleteKube(m *model.Kube, action *core.Action) error {
 			InternetGatewayId: aws.String(m.AWSConfig.InternetGatewayID),
 		}
 		if _, err := ec2S.DeleteInternetGateway(input); isErrAndNotAWSNotFound(err) {
+			if strings.Contains(err.Error(), "does not exist") {
+				// it does not exist,
+				return nil
+			}
 			return err
 		}
 		m.AWSConfig.InternetGatewayID = ""
@@ -960,15 +888,60 @@ func (p *Provider) deleteKube(m *model.Kube, action *core.Action) error {
 		return nil
 	})
 
-	procedure.AddStep("deleting VPC", func() error {
-		if m.AWSConfig.VPCID == "" {
-			return nil
-		}
-		input := &ec2.DeleteVpcInput{
-			VpcId: aws.String(m.AWSConfig.VPCID),
-		}
-		if _, err := ec2S.DeleteVpc(input); isErrAndNotAWSNotFound(err) {
+	procedure.AddStep("deleting S3 bucket", func() error {
+
+		objects, err := s3S.ListObjects(&s3.ListObjectsInput{
+			Bucket: aws.String("kubernetes-" + m.Name),
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "The specified bucket does not exist") {
+				// it does not exist,
+				return nil
+			}
 			return err
+		}
+
+		for _, object := range objects.Contents {
+			_, err = s3S.DeleteObject(&s3.DeleteObjectInput{
+				Bucket: aws.String("kubernetes-" + m.Name),
+				Key:    aws.String(*object.Key),
+			})
+			if err != nil {
+				return err
+			}
+		}
+
+		_, err = s3S.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String("kubernetes-" + m.Name),
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "The specified bucket does not exist") {
+				// it does not exist,
+				return nil
+			}
+			return err
+		}
+		return nil
+	})
+
+	procedure.AddStep("deleting VPC", func() error {
+
+		// Delete the VPC
+		resp, err := ec2S.DeleteVpc(&ec2.DeleteVpcInput{
+			VpcId: aws.String(m.AWSConfig.VPCID),
+		})
+		if isErrAndNotAWSNotFound(err) {
+			return err
+		}
+		fmt.Println(resp.String())
+		// Make sure it is gone.
+		_, err = ec2S.DescribeVpcs(&ec2.DescribeVpcsInput{
+			VpcIds: []*string{
+				aws.String(m.AWSConfig.VPCID), // Required
+			},
+		})
+		if err == nil {
+			return errors.New("VPC was not deleted")
 		}
 		m.AWSConfig.VPCID = ""
 		return nil
@@ -987,51 +960,28 @@ func (p *Provider) deleteKube(m *model.Kube, action *core.Action) error {
 	return procedure.Run()
 }
 
-func (p *Provider) createNode(m *model.Node) error {
-	server, err := p.createServer(m)
-	if err != nil {
-		return err
-	}
-	p.setAttrsFromServer(m, server)
-	if err := p.Core.DB.Save(m); err != nil {
-		return err
-	}
-	for _, entrypoint := range m.Kube.Entrypoints {
-		if err := p.registerNodes(entrypoint, m); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (p *Provider) setAttrsFromServer(m *model.Node, server *ec2.Instance) {
-	m.ProviderID = *server.InstanceId
-	m.Name = *server.PrivateDnsName
-	m.Size = *server.InstanceType
-	m.ProviderCreationTimestamp = *server.LaunchTime
-}
-
-func (p *Provider) createServer(m *model.Node) (*ec2.Instance, error) {
-
+// CreateNode creates a Kubernetes minion.
+func (p *Provider) CreateNode(m *model.Node, action *core.Action) error {
+	m.Name = m.Kube.Name + "-minion-" + util.RandomString(5)
 	// TODO move to init outside of func
-	userdataTemplate, err := bindata.Asset("config/providers/aws/minion_userdata.txt")
+	userdataTemplate, err := bindata.Asset("config/providers/aws/minion.yaml")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	template, err := template.New("minion_template").Parse(string(userdataTemplate))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var userdata bytes.Buffer
-	if err = template.Execute(&userdata, m.Kube); err != nil {
-		return nil, err
+	if err = template.Execute(&userdata, m); err != nil {
+		return err
 	}
 	encodedUserdata := base64.StdEncoding.EncodeToString(userdata.Bytes())
 
 	ec2S := p.EC2(m.Kube)
 	ami, err := getAMI(ec2S)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	input := &ec2.RunInstancesInput{
@@ -1047,47 +997,165 @@ func (p *Provider) createServer(m *model.Node) (*ec2.Instance, error) {
 		IamInstanceProfile: &ec2.IamInstanceProfileSpecification{
 			Name: aws.String("kubernetes-minion"),
 		},
-		BlockDeviceMappings: []*ec2.BlockDeviceMapping{
-			// root device ? TODO (do we need the one after this?)
-			{
-				DeviceName: aws.String("/dev/sda1"),
-				Ebs: &ec2.EbsBlockDevice{
-					VolumeType:          aws.String("gp2"),
-					VolumeSize:          aws.Int64(80),
-					DeleteOnTermination: aws.Bool(true),
-				},
-			},
-			&ec2.BlockDeviceMapping{
-				DeviceName: aws.String("/dev/xvdb"),
-				Ebs: &ec2.EbsBlockDevice{
-					VolumeType:          aws.String("gp2"),
-					VolumeSize:          aws.Int64(80),
-					DeleteOnTermination: aws.Bool(true),
-				},
-			},
-		},
 		UserData: aws.String(encodedUserdata),
 		SubnetId: aws.String(m.Kube.AWSConfig.PublicSubnetID),
 	}
 
 	resp, err := ec2S.RunInstances(input)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	server := resp.Instances[0]
 
 	err = tagAWSResource(ec2S, *server.InstanceId, map[string]string{
 		"KubernetesCluster": m.Kube.Name,
-		"Name":              m.Kube.Name + "-minion",
+		"Name":              m.Name,
 		"Role":              m.Kube.Name + "-minion",
 	})
 	if err != nil {
 		// TODO
 		p.Core.Log.Error("Failed to tag EC2 Instance " + *server.InstanceId)
 	}
+	m.ProviderID = *server.InstanceId
+	m.Name = *server.PrivateDnsName
+	m.ProviderCreationTimestamp = time.Now()
+	return p.Core.DB.Save(m)
+}
 
-	return server, nil
+// DeleteNode deletes a Kubernetes minion.
+func (p *Provider) DeleteNode(m *model.Node, action *core.Action) error {
+	return p.deleteServer(m)
+}
+
+// CreateVolume creates a kubernetes Volume.
+func (p *Provider) CreateVolume(m *model.Volume, action *core.Action) error {
+	return p.createVolume(m, nil)
+}
+
+// KubernetesVolumeDefinition defines object layout of a AWS volume.
+func (p *Provider) KubernetesVolumeDefinition(m *model.Volume) *kubernetes.Volume {
+	return &kubernetes.Volume{
+		Name: m.Name,
+		AwsElasticBlockStore: &kubernetes.AwsElasticBlockStore{
+			VolumeID: m.ProviderID,
+			FSType:   "ext4",
+		},
+	}
+}
+
+// ResizeVolume resizes a AWS volume.
+func (p *Provider) ResizeVolume(m *model.Volume, action *core.Action) error {
+	return p.resizeVolume(m, action)
+}
+
+// WaitForVolumeAvailable waits for AWS volume to be available.
+func (p *Provider) WaitForVolumeAvailable(m *model.Volume, action *core.Action) error {
+	return p.waitForAvailable(m)
+}
+
+// DeleteVolume deletes a aws volume.
+func (p *Provider) DeleteVolume(m *model.Volume, action *core.Action) error {
+	return p.deleteVolume(m)
+}
+
+// CreateEntrypoint creates a AWS LoadBalancer
+func (p *Provider) CreateEntrypoint(m *model.Entrypoint, action *core.Action) error {
+	return p.createELB(m)
+}
+
+// DeleteEntrypoint deletes a aws loadbalancer.
+func (p *Provider) DeleteEntrypoint(m *model.Entrypoint, action *core.Action) error {
+	return p.deleteELB(m)
+}
+
+// CreateEntrypointListener creates a listener for a aws loadbalancer.
+func (p *Provider) CreateEntrypointListener(m *model.EntrypointListener, action *core.Action) error {
+	input := &elb.CreateLoadBalancerListenersInput{
+		LoadBalancerName: aws.String(m.Entrypoint.ProviderID),
+		Listeners: []*elb.Listener{
+			{
+				LoadBalancerPort: aws.Int64(m.EntrypointPort),
+				Protocol:         aws.String(m.EntrypointProtocol),
+				InstancePort:     aws.Int64(m.NodePort),
+				InstanceProtocol: aws.String(m.NodeProtocol),
+			},
+		},
+	}
+	_, err := p.ELB(m.Entrypoint.Kube).CreateLoadBalancerListeners(input)
+	return err
+}
+
+// DeleteEntrypointListener deletes a listener form an aws loadbalancer.
+func (p *Provider) DeleteEntrypointListener(m *model.EntrypointListener, action *core.Action) error {
+	input := &elb.DeleteLoadBalancerListenersInput{
+		LoadBalancerName: aws.String(m.Entrypoint.ProviderID),
+		LoadBalancerPorts: []*int64{
+			aws.Int64(m.EntrypointPort),
+		},
+	}
+	_, err := p.ELB(m.Entrypoint.Kube).DeleteLoadBalancerListeners(input)
+	if isErrAndNotAWSNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Private methods                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+// EC2 client
+func EC2(kube *model.Kube) ec2iface.EC2API {
+	return ec2.New(globalAWSSession, awsConfig(kube))
+}
+
+// S3 client
+func S3(kube *model.Kube) s3iface.S3API {
+	return s3.New(globalAWSSession, awsConfig(kube))
+}
+
+// ELB client
+func ELB(kube *model.Kube) elbiface.ELBAPI {
+	return elb.New(globalAWSSession, awsConfig(kube))
+}
+
+// IAM client
+func IAM(kube *model.Kube) iamiface.IAMAPI {
+	return iam.New(globalAWSSession, awsConfig(kube))
+}
+
+func awsConfig(kube *model.Kube) *aws.Config {
+	c := kube.CloudAccount.Credentials
+	creds := credentials.NewStaticCredentials(c["access_key"], c["secret_key"], "")
+	creds.Get()
+	return aws.NewConfig().WithRegion(kube.AWSConfig.Region).WithCredentials(creds)
+}
+
+//------------------------------------------------------------------------------
+
+//func (p *Provider) createNode(m *model.Node) error {
+//	server, err := p.createServer(m)
+//	if err != nil {
+//		return err
+//	}
+//	p.setAttrsFromServer(m, server)
+//	if err := p.Core.DB.Save(m); err != nil {
+//		return err
+//	}
+//	for _, entrypoint := range m.Kube.Entrypoints {
+//		if err := p.registerNodes(entrypoint, m); err != nil {
+//			return err
+//		}
+//	}
+//	return nil
+//}
+
+func (p *Provider) setAttrsFromServer(m *model.Node, server *ec2.Instance) {
+	m.ProviderID = *server.InstanceId
+	m.Name = *server.PrivateDnsName
+	m.Size = *server.InstanceType
+	m.ProviderCreationTimestamp = *server.LaunchTime
 }
 
 func (p *Provider) deleteServer(m *model.Node) error {
@@ -1133,11 +1201,13 @@ func (p *Provider) createELB(m *model.Entrypoint) error {
 
 	// Save Address
 	m.Address = *resp.DNSName
-	if err := p.Core.DB.Save(m); err != nil {
+	err = p.Core.DB.Save(m)
+	if err != nil {
 		return err
 	}
 
-	if err := p.registerNodes(m, m.Kube.Nodes...); err != nil {
+	err = p.registerNodes(m, m.Kube.Nodes...)
+	if err != nil {
 		return err
 	}
 
@@ -1197,7 +1267,8 @@ func (p *Provider) createVolume(volume *model.Volume, snapshotID *string) error 
 
 	volume.ProviderID = *awsVol.VolumeId
 	volume.Size = int(*awsVol.Size)
-	if err := p.Core.DB.Save(volume); err != nil {
+	err = p.Core.DB.Save(volume)
+	if err != nil {
 		return err
 	}
 
@@ -1321,7 +1392,7 @@ func (p *Provider) deleteSnapshot(volume *model.Volume, snapshot *ec2.Snapshot) 
 
 // is it NOT Not Found
 func isErrAndNotAWSNotFound(err error) bool {
-	return err != nil && !regexp.MustCompile(`([Nn]ot *[Ff]ound|404)`).MatchString(err.Error())
+	return err != nil && !regexp.MustCompile(`([Nn]ot *[Ff]ound|404|)`).MatchString(err.Error())
 }
 
 func createIAMRole(iamS iamiface.IAMAPI, name string, policy string) error {

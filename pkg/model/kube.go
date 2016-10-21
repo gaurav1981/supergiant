@@ -73,6 +73,8 @@ type AWSKubeConfig struct {
 	ELBSecurityGroupID            string `json:"elb_security_group_id" sg:"readonly"`
 	NodeSecurityGroupID           string `json:"node_security_group_id" sg:"readonly"`
 	MasterID                      string `json:"master_id" sg:"readonly"`
+
+	KubernetesVersion string `json:"kubernetes_version" validate:"nonzero" sg:"default=1.4.3"`
 }
 
 // DOKubeConfig holds do specific information about DO based KUbernetes clusters.

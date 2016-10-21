@@ -8,7 +8,7 @@ write_files:
     permissions: "0755"
     content: |
       #!/bin/bash
-      K8S_VERSION=v1.2.0
+      K8S_VERSION=v{{ .AWSConfig.KubernetesVersion }}
       mkdir -p /opt/bin
       FILE=$1
       if [ ! -f /opt/bin/$FILE ]; then
@@ -124,7 +124,7 @@ write_files:
         hostNetwork: true
         containers:
         - name: kube-apiserver
-          image: gcr.io/google_containers/hyperkube:v1.2.0
+          image: gcr.io/google_containers/hyperkube:v{{ .AWSConfig.KubernetesVersion }}
           command:
           - /hyperkube
           - apiserver
@@ -181,7 +181,7 @@ write_files:
         hostNetwork: true
         containers:
         - name: kube-proxy
-          image: gcr.io/google_containers/hyperkube:v1.2.0
+          image: gcr.io/google_containers/hyperkube:v{{ .AWSConfig.KubernetesVersion }}
           command:
           - /hyperkube
           - proxy
@@ -534,7 +534,7 @@ write_files:
         hostNetwork: true
         containers:
         - name: kube-controller-manager
-          image: gcr.io/google_containers/hyperkube:v1.2.0
+          image: gcr.io/google_containers/hyperkube:v{{ .AWSConfig.KubernetesVersion }}
           command:
           - /hyperkube
           - controller-manager
@@ -575,7 +575,7 @@ write_files:
         hostNetwork: true
         containers:
         - name: kube-scheduler
-          image: gcr.io/google_containers/hyperkube:v1.2.0
+          image: gcr.io/google_containers/hyperkube:v{{ .AWSConfig.KubernetesVersion }}
           command:
           - /hyperkube
           - scheduler
@@ -664,8 +664,7 @@ coreos:
          --cluster-dns=10.3.0.10 \
          --cluster_domain=cluster.local \
          --register-node=false \
-         --cloud-provider=openstack \
-         --cloud-config=/etc/kubernetes/ssl/cloud.conf \
+         --cloud-provider=aws \
          --node-ip=$private_ipv4
         Restart=on-failure
         RestartSec=5

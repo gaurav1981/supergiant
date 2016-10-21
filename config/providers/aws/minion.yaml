@@ -2,13 +2,13 @@
 
 hostname: "{{ .Name }}"
 ssh_authorized_keys:
-  - "{{ .Kube.OpenStackConfig.SSHPubKey }}"
+  - "{{ .Kube.AWSConfig.SSHPubKey }}"
 write_files:
   - path: "/opt/bin/download-k8s-binary"
     permissions: "0755"
     content: |
       #!/bin/bash
-      K8S_VERSION=v1.2.0
+      K8S_VERSION=v{{ .Kube.AWSConfig.KubernetesVersion }}
       mkdir -p /opt/bin
       FILE=$1
       if [ ! -f /opt/bin/$FILE ]; then
@@ -29,17 +29,6 @@ write_files:
       wget https://github.com/digitalocean/doctl/releases/download/v1.4.0/doctl-1.4.0-linux-amd64.tar.gz
       tar xf /tmp/doctl-1.4.0-linux-amd64.tar.gz
       sudo mv /tmp/doctl /opt/bin/
-  - path: /etc/kubernetes/ssl/cloud.conf
-    permissions: 0600
-    content: |
-      [Global]
-      auth-url = {{ index .Kube.CloudAccount.Credentials "identity_endpoint" }}
-      username = {{ index .Kube.CloudAccount.Credentials "username" }}
-      password = {{ index .Kube.CloudAccount.Credentials "password" }}
-      tenant-id = {{ index .Kube.CloudAccount.Credentials "tenant_id" }}
-      region = {{ .Kube.OpenStackConfig.Region }}
-      [LoadBalancer]
-      subnet-id = {{ .Kube.OpenStackConfig.SubnetID }}
   - path: "/etc/kubernetes/manifests/kube-proxy.yaml"
     permissions: "0644"
     owner: "root"
@@ -53,11 +42,11 @@ write_files:
         hostNetwork: true
         containers:
         - name: kube-proxy
-          image: gcr.io/google_containers/hyperkube:v1.2.0
+          image: gcr.io/google_containers/hyperkube:v{{ .Kube.AWSConfig.KubernetesVersion }}
           command:
           - /hyperkube
           - proxy
-          - --master=https://{{ .Kube.OpenStackConfig.MasterPrivateIP }}
+          - --master=https://{{ .Kube.AWSConfig.MasterPrivateIP }}
           - --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml
           - --proxy-mode=iptables
           securityContext:
@@ -104,7 +93,7 @@ write_files:
 coreos:
   flannel:
     iface: $COREOS_PRIVATE_IPV4
-    etcd_endpoints: http://{{ .Kube.OpenStackConfig.MasterPrivateIP }}:2379
+    etcd_endpoints: http://{{ .Kube.AWSConfig.MasterPrivateIP }}:2379
 
   units:
     - name: flanneld.service
@@ -162,12 +151,12 @@ coreos:
         ExecStartPre=/bin/bash -c "/opt/bin/download-k8s-binary kubelet"
         ExecStart=/opt/bin/kubelet \
           --allow-privileged=true \
-          --api_servers=https://{{ .Kube.OpenStackConfig.MasterPrivateIP }} \
+          --api_servers=https://{{ .Kube.AWSConfig.MasterPrivateIP }} \
           --cluster-dns=10.3.0.10 \
           --cluster_domain=cluster.local \
-          --cloud-provider=openstack \
-          --cloud-config=/etc/kubernetes/ssl/cloud.conf \
+          --cloud-provider=aws \
           --config=/etc/kubernetes/manifests \
+          --hostname-override={{ .Name }} \
           --node-ip=$private_ipv4 \
           --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \
           --volume-plugin-dir=/etc/kubernetes/volumeplugins \
